@@ -1,49 +1,39 @@
 const crypto = require('crypto');
-const nodemailer = require('nodemailer');
 const bcrypt = require('bcryptjs');
 const { pool } = require('../config/database');
+const Brevo = require('@getbrevo/brevo');
 
-// Email transporter
-const transporter = nodemailer.createTransport({
-  host: process.env.EMAIL_HOST,
-  port: Number(process.env.EMAIL_PORT),
-  secure: false,
-  auth: {
-    user: process.env.EMAIL_USER,
-    pass: process.env.EMAIL_PASS,
-  },
-});
+// Brevo API client
+const brevoClient = new Brevo.TransactionalEmailsApi();
+brevoClient.authentications['api-key'].apiKey = process.env.BREVO_API_KEY;
 
 // Forgot Password
 const forgotPassword = async (req, res) => {
   const { email } = req.body;
 
   try {
-    // Check if user exists
     const [users] = await pool.query('SELECT * FROM users WHERE email = ?', [email]);
-    
+
     if (users.length === 0) {
       return res.status(404).json({ success: false, message: 'No account found with this email' });
     }
 
-    // Generate reset token
     const resetToken = crypto.randomBytes(32).toString('hex');
-    const resetExpires = new Date(Date.now() + 3600000); // 1 hour
+    const resetExpires = new Date(Date.now() + 3600000);
 
-    // Save token to database
     await pool.query(
       'UPDATE users SET reset_token = ?, reset_token_expires = ? WHERE email = ?',
       [resetToken, resetExpires, email]
     );
 
-    // Send email
     const resetURL = `kaavish://reset-password/${resetToken}`;
-    
-    await transporter.sendMail({
-      from: process.env.EMAIL_USER,
-      to: email,
+
+    // Send via Brevo HTTP API (not SMTP)
+    await brevoClient.sendTransacEmail({
+      sender: { email: 'ab375c001@smtp-brevo.com', name: 'Kaavish' },
+      to: [{ email }],
       subject: 'Kaavish - Password Reset Request',
-      html: `
+      htmlContent: `
         <h2>Password Reset Request</h2>
         <p>You requested to reset your password for your Kaavish account.</p>
         <p>Click the button below to reset your password. This link expires in 1 hour.</p>
@@ -67,7 +57,6 @@ const resetPassword = async (req, res) => {
   const { token, newPassword } = req.body;
 
   try {
-    // Find user with valid token
     const [users] = await pool.query(
       'SELECT * FROM users WHERE reset_token = ? AND reset_token_expires > NOW()',
       [token]
@@ -77,10 +66,8 @@ const resetPassword = async (req, res) => {
       return res.status(400).json({ success: false, message: 'Invalid or expired reset token' });
     }
 
-    // Hash new password
     const hashedPassword = await bcrypt.hash(newPassword, 10);
 
-    // Update password and clear token
     await pool.query(
       'UPDATE users SET password = ?, reset_token = NULL, reset_token_expires = NULL WHERE reset_token = ?',
       [hashedPassword, token]
