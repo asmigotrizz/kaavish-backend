@@ -1,13 +1,8 @@
 const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
 const { pool } = require('../config/database');
-const Brevo = require('@getbrevo/brevo');
+const axios = require('axios');
 
-// Brevo API client
-const brevoClient = new Brevo.TransactionalEmailsApi();
-brevoClient.authentications['api-key'].apiKey = process.env.BREVO_API_KEY;
-
-// Forgot Password
 const forgotPassword = async (req, res) => {
   const { email } = req.body;
 
@@ -28,8 +23,8 @@ const forgotPassword = async (req, res) => {
 
     const resetURL = `kaavish://reset-password/${resetToken}`;
 
-    // Send via Brevo HTTP API (not SMTP)
-    await brevoClient.sendTransacEmail({
+    // Brevo HTTP API via axios
+    await axios.post('https://api.brevo.com/v3/smtp/email', {
       sender: { email: 'ab375c001@smtp-brevo.com', name: 'Kaavish' },
       to: [{ email }],
       subject: 'Kaavish - Password Reset Request',
@@ -42,17 +37,21 @@ const forgotPassword = async (req, res) => {
         </a>
         <p>If you didn't request this, ignore this email.</p>
       `,
+    }, {
+      headers: {
+        'api-key': process.env.BREVO_API_KEY,
+        'Content-Type': 'application/json',
+      },
     });
 
     res.json({ success: true, message: 'Password reset email sent!' });
 
   } catch (error) {
-    console.error('Forgot password error:', error);
+    console.error('Forgot password error:', error.response?.data || error.message);
     res.status(500).json({ success: false, message: 'Failed to send reset email' });
   }
 };
 
-// Reset Password
 const resetPassword = async (req, res) => {
   const { token, newPassword } = req.body;
 
